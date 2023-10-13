@@ -1,32 +1,65 @@
+import fs from "fs";
+import { fileURLToPath } from "url";
+import path from "path";
+import { Client, Collection, Events, GatewayIntentBits } from "discord.js";
 import ENV from "dotenv";
-import { Client, GatewayIntentBits } from "discord.js";
 
 ENV.config();
-const BOT_TOKEN = process.env.TOKEN;
+const TOKEN = process.env.TOKEN;
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-if (!BOT_TOKEN) {
-  console.error(
-    "Bot token is missing. Make sure to set TOKEN in your .env file."
-  );
-  process.exit(1);
+client.commands = new Collection();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const foldersPath = path.join(__dirname, "commands");
+const commandFolders = fs.readdirSync(foldersPath);
+
+for (const folder of commandFolders) {
+  const commandsPath = path.join(foldersPath, folder);
+  const commandFiles = fs
+    .readdirSync(commandsPath)
+    .filter((file) => file.endsWith(".js"));
+  for (const file of commandFiles) {
+    const filePath = path.join(commandsPath, file);
+    const command = await import(filePath);
+    if ("data" in command && "execute" in command) {
+      client.commands.set(command.data.name, command);
+    } else {
+      console.log(
+        `[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`
+      );
+    }
+  }
 }
 
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
+client.once(Events.ClientReady, () => {
+  console.log("Ready!");
 });
 
-client.once("ready", () => {
-  console.log(`Logged in as ${client.user.tag}`);
-});
+client.on(Events.InteractionCreate, async (interaction) => {
+  if (!interaction.isCommand()) return;
 
-client.on("messageCreate", (message) => {
-  if (message.author.bot) return;
+  const command = client.commands.get(interaction.commandName);
 
-  if (message.content === "!ping") {
-    message.reply("Pong!");
+  if (!command) return;
+
+  try {
+    await command.execute(interaction);
+  } catch (error) {
+    console.error(error);
+    if (interaction.replied || interaction.deferred) {
+      await interaction.followUp({
+        content: "There was an error while executing this command!",
+        ephemeral: true,
+      });
+    } else {
+      await interaction.reply({
+        content: "There was an error while executing this command!",
+        ephemeral: true,
+      });
+    }
   }
 });
 
-client.login(BOT_TOKEN).catch((error) => {
-  console.error(`Error logging in: ${error.message}`);
-});
+client.login(TOKEN);
